@@ -4,10 +4,21 @@ use std::{
     path::PathBuf,
 };
 
-/// Read the first FASTQ header without its line ending.
+use flate2::read::MultiGzDecoder;
+
+/// Read the first FASTQ header without its line ending, decoding `.gz` files.
 pub fn read_id(fastq: &PathBuf) -> io::Result<String> {
+    let file = File::open(fastq)?;
+    if fastq.extension().is_some_and(|extension| extension == "gz") {
+        read_header(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        read_header(BufReader::new(file))
+    }
+}
+
+fn read_header(mut reader: impl BufRead) -> io::Result<String> {
     let mut header = String::new();
-    if BufReader::new(File::open(fastq)?).read_line(&mut header)? == 0 {
+    if reader.read_line(&mut header)? == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "FASTQ file is empty",
@@ -35,11 +46,13 @@ pub fn read_id(fastq: &PathBuf) -> io::Result<String> {
 mod tests {
     use std::{
         fs,
-        io::ErrorKind,
+        io::{ErrorKind, Write},
         path::PathBuf,
         sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    use flate2::{Compression, write::GzEncoder};
 
     use super::read_id;
     use crate::core::identify_instrument;
@@ -52,12 +65,16 @@ mod tests {
 
     impl TempFastq {
         fn new(contents: &[u8]) -> Self {
+            Self::with_suffix(contents, ".fastq")
+        }
+
+        fn with_suffix(contents: &[u8], suffix: &str) -> Self {
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
             let path = std::env::temp_dir().join(format!(
-                "seqsource-fastx-{}-{timestamp}-{}.fastq",
+                "seqsource-fastx-{}-{timestamp}-{}{suffix}",
                 std::process::id(),
                 NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
             ));
@@ -70,6 +87,12 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.path);
         }
+    }
+
+    fn gzip(contents: &[u8]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(contents).unwrap();
+        encoder.finish().unwrap()
     }
 
     #[test]
@@ -95,5 +118,32 @@ mod tests {
                 ErrorKind::InvalidData
             );
         }
+    }
+
+    #[test]
+    fn reads_gzipped_fastq_headers() {
+        for suffix in [".fastq.gz", ".fq.gz"] {
+            let fastq = TempFastq::with_suffix(&gzip(b"@ST-E00185:1\r\nACGT\r\n"), suffix);
+            let header = read_id(&fastq.path).unwrap();
+            assert_eq!(header, "@ST-E00185:1");
+            assert_eq!(identify_instrument(&header), "Illumina HiSeq X");
+        }
+    }
+
+    #[test]
+    fn rejects_gzipped_empty_and_non_header_first_lines() {
+        for contents in [b"".as_slice(), b"A00119:1\n"] {
+            let fastq = TempFastq::with_suffix(&gzip(contents), ".fastq.gz");
+            assert_eq!(
+                read_id(&fastq.path).unwrap_err().kind(),
+                ErrorKind::InvalidData
+            );
+        }
+    }
+
+    #[test]
+    fn returns_an_error_for_invalid_gzip_data() {
+        let fastq = TempFastq::with_suffix(b"not gzip data", ".fastq.gz");
+        assert!(read_id(&fastq.path).is_err());
     }
 }

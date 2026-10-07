@@ -10,10 +10,11 @@ cargo install --git https://github.com/selkamand/seqsource
 
 ## Quick Start
 
-Run on a single fastq file
+Run on a single FASTQ file, plain or gzip-compressed
 
 ```
 seqsource fastq path/to/sequence.fastq
+seqsource fastq path/to/sequence.fastq.gz
 ```
 
 Run on many samples using a manifest tsv with the following columns 
