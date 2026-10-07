@@ -13,7 +13,7 @@ cargo install --git https://github.com/selkamand/seqsource
 Run on a single fastq file
 
 ```
-seqsource --fastq "my.fastq"
+seqsource fastq path/to/sequence.fastq
 ```
 
 Run on many samples using a manifest tsv with the following columns 
