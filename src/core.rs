@@ -15,8 +15,11 @@ impl InstrumentPatterns {
     }
 }
 
+// If you want to add support for another instrument, add here
+
 pub fn instruments() -> Vec<InstrumentPatterns> {
     vec![
+        // NOVASEQ
         InstrumentPatterns {
             name: "Illumina NovaSeq X Plus".to_string(),
             regex: regex!("^@LH[0-9]{5}").to_owned(),
@@ -33,9 +36,39 @@ pub fn instruments() -> Vec<InstrumentPatterns> {
             name: "Illumina NovaSeq 6000Dx".to_string(),
             regex: regex!("^@ADX[0-9]{5}").to_owned(),
         },
+        // HiSeq X
         InstrumentPatterns {
             name: "Illumina HiSeq X".to_string(),
             regex: regex!("^@ST-E[0-9]{5}").to_owned(),
+        },
+        InstrumentPatterns {
+            name: "Illumina HiSeq 4000".to_string(),
+            regex: regex!("^@K[0-9]{4}").to_owned(),
+        },
+        InstrumentPatterns {
+            name: "Illumina HiSeq 3000".to_string(),
+            regex: regex!("^@K[0-9]{4}").to_owned(),
+        },
+        InstrumentPatterns {
+            name: "Illumina HiSeq 2500".to_string(),
+            regex: regex!("^@(HWI-)?D[0-9]{5}").to_owned(),
+        },
+        // NEXTSEQ
+        InstrumentPatterns {
+            name: "Illumina NextSeq 500".to_string(),
+            regex: regex!("^@N[SBL]50[0-9]{4}").to_owned(),
+        },
+        InstrumentPatterns {
+            name: "Illumina NextSeq 550".to_string(),
+            regex: regex!("^@N[SB]55[0-9]{4}").to_owned(),
+        },
+        InstrumentPatterns {
+            name: "Illumina NextSeq 550DX".to_string(),
+            regex: regex!("^@NDX[0-9]{4}").to_owned(),
+        },
+        InstrumentPatterns {
+            name: "Illumina NextSeq1k2K".to_string(),
+            regex: regex!("^@V[HL][0-9]{5}").to_owned(),
         },
     ]
 }
