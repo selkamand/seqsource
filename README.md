@@ -1,5 +1,8 @@
 # SeqSource
 
+> [!WARNING]
+> This tool is in early development and is not yet ready for use.
+
 Rapidly infer instrument used to generate whole-genome sequencing dataset based on fastq.
 
 ## Install
