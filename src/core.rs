@@ -45,24 +45,51 @@ pub fn identify_instrument(fastq_header: &str) -> String {
     identify_instrument_from_patterns(fastq_header, &instruments)
 }
 
+/// Return the prediction and colon-separated matching codes, without their leading `@`.
+pub fn identify_instrument_with_codes(fastq_header: &str) -> (String, String) {
+    let instruments = instruments();
+    identify_instrument_with_codes_from_patterns(fastq_header, &instruments)
+}
+
 fn identify_instrument_from_patterns(
     fastq_header: &str,
     patterns: &[InstrumentPatterns],
 ) -> String {
+    identify_instrument_with_codes_from_patterns(fastq_header, patterns).0
+}
+
+fn identify_instrument_with_codes_from_patterns(
+    fastq_header: &str,
+    patterns: &[InstrumentPatterns],
+) -> (String, String) {
     let hits: Vec<_> = patterns
         .iter()
-        .filter(|pattern| pattern.is_match(fastq_header))
+        .filter_map(|pattern| {
+            pattern.regex.find(fastq_header).map(|matched| {
+                let code = matched.as_str();
+                (
+                    pattern.name.as_str(),
+                    code.strip_prefix('@').unwrap_or(code),
+                )
+            })
+        })
         .collect();
 
     match hits.len() {
-        0 => "unknown".to_string(),
-        1 => hits.first().expect("bug in extraction of instrument name. Please report this error message in a new github issue").name.clone(),
-        _ => format!(
-            "ambiguous:{}",
+        0 => ("unknown".to_string(), "unknown".to_string()),
+        1 => (hits[0].0.to_string(), hits[0].1.to_string()),
+        _ => (
+            format!(
+                "ambiguous:{}",
+                hits.iter()
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>()
+                    .join(";")
+            ),
             hits.iter()
-                .map(|instrument| instrument.name.as_str())
+                .map(|(_, code)| *code)
                 .collect::<Vec<_>>()
-                .join(";")
+                .join(":"),
         ),
     }
 }
@@ -70,10 +97,9 @@ fn identify_instrument_from_patterns(
 #[cfg(test)]
 mod tests {
     use super::{
-        InstrumentPatterns, identify_instrument, identify_instrument_from_patterns, instruments,
+        InstrumentPatterns, identify_instrument, identify_instrument_from_patterns,
+        identify_instrument_with_codes, identify_instrument_with_codes_from_patterns, instruments,
     };
-    use std::io::ErrorKind;
-
     const CASES: [(&str, &str); 5] = [
         ("Illumina NovaSeq X Plus", "@LH12345"),
         ("Illumina NovaSeq X", "@LL12345"),
@@ -145,12 +171,20 @@ mod tests {
         for (name, code) in CASES {
             let header = format!("{code}:1:FLOWCELL:1:1101:1000:1000");
             assert_eq!(identify_instrument(&header), name);
+            assert_eq!(
+                identify_instrument_with_codes(&header),
+                (name.to_string(), code.trim_start_matches('@').to_string())
+            );
         }
     }
 
     #[test]
     fn returns_unknown_when_no_instrument_matches() {
         assert_eq!(identify_instrument("@ZZ12345:1:FLOWCELL"), "unknown");
+        assert_eq!(
+            identify_instrument_with_codes("@ZZ12345:1:FLOWCELL"),
+            ("unknown".to_string(), "unknown".to_string())
+        );
     }
 
     #[test]
@@ -169,6 +203,13 @@ mod tests {
         assert_eq!(
             identify_instrument_from_patterns("@LH12345:1:FLOWCELL", &patterns),
             "ambiguous:First;Second"
+        );
+        assert_eq!(
+            identify_instrument_with_codes_from_patterns("@LH12345:1:FLOWCELL", &patterns),
+            (
+                "ambiguous:First;Second".to_string(),
+                "LH12345:LH".to_string()
+            )
         );
     }
 
@@ -196,6 +237,13 @@ mod tests {
         assert_eq!(
             identify_instrument_from_patterns("@LH12345:1:FLOWCELL", &patterns),
             "ambiguous:First;Second;First"
+        );
+        assert_eq!(
+            identify_instrument_with_codes_from_patterns("@LH12345:1:FLOWCELL", &patterns),
+            (
+                "ambiguous:First;Second;First".to_string(),
+                "LH12345:LH:LH123".to_string()
+            )
         );
     }
 
