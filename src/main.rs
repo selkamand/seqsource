@@ -26,17 +26,16 @@ enum Commands {
         #[arg(long, conflicts_with = "simple")]
         id: Option<String>,
     },
-
-    /// Download the first read from an SRA accession
-    Download {
-        /// SRA accession code
-        sra: String,
-    },
     /// Analyse FASTQ paths from a TSV manifest
     Manifest {
         /// TSV file with id and fastq columns
         #[arg(value_name = "MANIFEST.TSV")]
         manifest: PathBuf,
+    },
+    /// Download the first read from an SRA accession
+    Download {
+        /// SRA accession code
+        sra: String,
     },
 }
 
