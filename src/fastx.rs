@@ -1,14 +1,49 @@
 use std::{
     fs::File,
     io::{self, BufRead, BufReader},
-    path::PathBuf,
+    path::Path,
 };
 
 use flate2::read::MultiGzDecoder;
 
 /// Read the first FASTQ header without its line ending, decoding `.gz` files.
-pub fn read_id(fastq: &PathBuf) -> io::Result<String> {
-    let file = File::open(fastq)?;
+pub fn read_id(fastq: &Path) -> io::Result<String> {
+    read_id_classified(fastq).map_err(HeaderReadError::into_io_error)
+}
+
+#[derive(Debug)]
+pub(crate) enum HeaderReadError {
+    Empty,
+    InvalidHeader,
+    Open(io::Error),
+    Read(io::Error),
+}
+
+impl HeaderReadError {
+    fn into_io_error(self) -> io::Error {
+        match self {
+            Self::Empty => io::Error::new(io::ErrorKind::InvalidData, "FASTQ file is empty"),
+            Self::InvalidHeader => io::Error::new(
+                io::ErrorKind::InvalidData,
+                "first FASTQ line must start with '@'",
+            ),
+            Self::Open(error) | Self::Read(error) => error,
+        }
+    }
+}
+
+impl std::fmt::Display for HeaderReadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("FASTQ file is empty"),
+            Self::InvalidHeader => formatter.write_str("first FASTQ line must start with '@'"),
+            Self::Open(error) | Self::Read(error) => error.fmt(formatter),
+        }
+    }
+}
+
+pub(crate) fn read_id_classified(fastq: &Path) -> Result<String, HeaderReadError> {
+    let file = File::open(fastq).map_err(HeaderReadError::Open)?;
     if fastq.extension().is_some_and(|extension| extension == "gz") {
         read_header(BufReader::new(MultiGzDecoder::new(file)))
     } else {
@@ -16,13 +51,14 @@ pub fn read_id(fastq: &PathBuf) -> io::Result<String> {
     }
 }
 
-fn read_header(mut reader: impl BufRead) -> io::Result<String> {
+fn read_header(mut reader: impl BufRead) -> Result<String, HeaderReadError> {
     let mut header = String::new();
-    if reader.read_line(&mut header)? == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "FASTQ file is empty",
-        ));
+    if reader
+        .read_line(&mut header)
+        .map_err(HeaderReadError::Read)?
+        == 0
+    {
+        return Err(HeaderReadError::Empty);
     }
 
     if header.ends_with('\n') {
@@ -33,10 +69,7 @@ fn read_header(mut reader: impl BufRead) -> io::Result<String> {
     }
 
     if !header.starts_with('@') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "first FASTQ line must start with '@'",
-        ));
+        return Err(HeaderReadError::InvalidHeader);
     }
 
     Ok(header)

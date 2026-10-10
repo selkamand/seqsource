@@ -13,29 +13,30 @@ cargo install --git https://github.com/selkamand/seqsource
 
 ## Quick Start
 
-Run on a single FASTQ file (plain or gzip-compressed)
+Run on a single FASTQ file (plain or gzip-compressed):
 
 ```
+# Run on a single fastq
 seqsource fastq path/to/sequence.fastq
-seqsource fastq --detailed path/to/sequence.fastq.gz
+
+# Same as above but manually specify id to use for output
+seqsource fastq --id sample_1 path/to/sequence.fastq.gz
+```
+
+Or check many files based on a manifest with `id` and `fastq` columns:
+
+```tsv
+id	fastq
+sample_1	reads/sample_1.fastq.gz
+sample_2	reads/sample_2.fastq.gz
+```
+
+```sh
+seqsource manifest path/to/manifest.tsv
 ```
 
 ## Output
 
-By default, `seqsource fastq` prints the predicted instrument name on one line:
-
+```tsv
+id	fastq	instrument_guess	code	fastq_header	fastq_check_success	failure_reason
 ```
-Illumina NovaSeq 6000
-```
-
-With `--detailed`, it prints one headerless TSV row with three columns: prediction,
-instrument code, and the full first FASTQ header (including `@`):
-
-```
-Illumina HiSeq X	ST-E00545	@ST-E00545:419:HLL3MCCXY:8:1101:5041:1713
-```
-
-When there is no match, the first two columns are `unknown`. If multiple patterns
-match, the prediction lists their names separated by semicolons after `ambiguous:`,
-and the codes are separated by colons in the same order. Fields containing tabs or
-quotes are quoted, with embedded quotes doubled.
