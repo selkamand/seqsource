@@ -3,6 +3,9 @@
 > [!WARNING]
 > This tool is in early development and is not yet ready for use.
 
+> [!INFO]
+> This work was primarily AI-generated. AI was prompted for its contributions, or AI assistance was enabled. AI-generated content was reviewed and approved. 
+
 Rapidly infer instrument used to generate whole-genome sequencing dataset based on fastq.
 
 ## Install
