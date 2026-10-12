@@ -2,6 +2,7 @@ use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
 use std::{
     io::{self, BufWriter, Write},
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -31,6 +32,9 @@ enum Commands {
         /// TSV file with id and fastq columns
         #[arg(value_name = "MANIFEST.TSV")]
         manifest: PathBuf,
+        /// Number of FASTQ files to check at once
+        #[arg(short = 't', long = "threads", value_name = "N", default_value = "1")]
+        threads: NonZeroUsize,
     },
     /// Download the first read from an SRA accession
     Download {
@@ -67,10 +71,11 @@ fn main() -> Result<()> {
             let filepath = seqsource::sra::download_first_read(&sra)?;
             eprintln!("Successfully downloaded read to {}", filepath.display());
         }
-        Commands::Manifest { manifest } => {
+        Commands::Manifest { manifest, threads } => {
             let started = Instant::now();
             let mut output = BufWriter::new(io::stdout().lock());
-            let summary = seqsource::manifest::analyse_from_manifest(&manifest, &mut output)?;
+            let summary =
+                seqsource::manifest::analyse_from_manifest(&manifest, threads, &mut output)?;
             output.flush()?;
             eprintln!(
                 "Samples: total={} successful={} failed={}",

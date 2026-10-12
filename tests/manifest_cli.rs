@@ -67,9 +67,10 @@ impl Drop for TempDir {
     }
 }
 
-fn run_manifest(path: &Path) -> Output {
+fn run_manifest(path: &Path, options: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_seqsource"))
         .arg("manifest")
+        .args(options)
         .arg(path)
         .output()
         .unwrap()
@@ -108,7 +109,7 @@ fn manifest_preserves_order_and_reports_each_fastq_outcome() {
             &["ignored", "a_directory.fastq", "directory"],
         ],
     );
-    let output = run_manifest(&manifest);
+    let output = run_manifest(&manifest, &[]);
     assert!(
         output.status.success(),
         "{}",
@@ -189,6 +190,17 @@ fn manifest_preserves_order_and_reports_each_fastq_outcome() {
         "missing_file=1 empty_fastq=2 invalid_fastq=2 non_file_path=1 other_read_error=0"
     ));
     assert!(stderr.contains("Elapsed: "));
+
+    for options in [&["-t", "1"][..], &["--threads", "4"][..]] {
+        let threaded = run_manifest(&manifest, options);
+        assert!(threaded.status.success());
+        assert_eq!(threaded.stdout, output.stdout);
+        let threaded_stderr = String::from_utf8(threaded.stderr).unwrap();
+        assert_eq!(
+            threaded_stderr.lines().take(2).collect::<Vec<_>>(),
+            stderr.lines().take(2).collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]
@@ -197,7 +209,7 @@ fn manifest_quotes_input_and_output_fields() {
     let filename = "name\twith\"quote.fastq";
     directory.file(filename, b"@A00119:1\tsample \"one\"\n");
     let manifest = directory.manifest(&["id", "fastq"], &[&["id\t\"one\"", filename]]);
-    let output = run_manifest(&manifest);
+    let output = run_manifest(&manifest, &[]);
     assert!(
         output.status.success(),
         "{}",
@@ -227,7 +239,7 @@ fn malformed_manifest_fails_before_writing_stdout() {
     ] {
         let refs: Vec<&[&str]> = rows.iter().map(Vec::as_slice).collect();
         let manifest = directory.manifest(&headers, &refs);
-        let output = run_manifest(&manifest);
+        let output = run_manifest(&manifest, &[]);
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
         assert!(!output.stderr.is_empty());
@@ -238,7 +250,7 @@ fn malformed_manifest_fails_before_writing_stdout() {
 fn header_only_manifest_has_zero_counts() {
     let directory = TempDir::new();
     let manifest = directory.manifest(&["id", "fastq"], &[]);
-    let output = run_manifest(&manifest);
+    let output = run_manifest(&manifest, &[]);
     assert!(output.status.success());
     let (_, rows) = records(&output.stdout);
     assert!(rows.is_empty());
@@ -247,6 +259,26 @@ fn header_only_manifest_has_zero_counts() {
             .unwrap()
             .contains("Samples: total=0 successful=0 failed=0")
     );
+    let threaded = run_manifest(&manifest, &["-t", "4"]);
+    assert!(threaded.status.success());
+    assert_eq!(threaded.stdout, output.stdout);
+    assert!(
+        String::from_utf8(threaded.stderr)
+            .unwrap()
+            .contains("Samples: total=0 successful=0 failed=0")
+    );
+}
+
+#[test]
+fn invalid_thread_counts_are_rejected_before_output() {
+    let directory = TempDir::new();
+    let manifest = directory.manifest(&["id", "fastq"], &[]);
+    for count in ["0", "not-a-number", "-1"] {
+        let output = run_manifest(&manifest, &["-t", count]);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!output.stderr.is_empty());
+    }
 }
 
 #[test]
@@ -267,9 +299,9 @@ fn manifest_help_describes_the_command_and_argument() {
         .output()
         .unwrap();
     assert!(manifest_help.status.success());
-    assert!(
-        String::from_utf8(manifest_help.stdout)
-            .unwrap()
-            .contains("TSV file with id and fastq columns")
-    );
+    let help = String::from_utf8(manifest_help.stdout).unwrap();
+    assert!(help.contains("TSV file with id and fastq columns"));
+    assert!(help.contains("-t, --threads <N>"));
+    assert!(help.contains("Number of FASTQ files to check at once"));
+    assert!(help.contains("[default: 1]"));
 }

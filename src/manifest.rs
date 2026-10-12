@@ -1,9 +1,11 @@
 use std::{
     io::Write,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
+use rayon::{ThreadPoolBuilder, prelude::*};
 use serde::Deserialize;
 
 use crate::{
@@ -116,13 +118,23 @@ fn analyse_entry(entry: ManifestEntry) -> EntryOutcome {
     EntryOutcome { entry, check }
 }
 
-pub fn analyse_from_manifest(manifest: &Path, output: &mut impl Write) -> Result<AnalysisSummary> {
+pub fn analyse_from_manifest(
+    manifest: &Path,
+    threads: NonZeroUsize,
+    output: &mut impl Write,
+) -> Result<AnalysisSummary> {
     let entries = read_manifest(manifest)?;
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(threads.get())
+        .build()
+        .context("could not start FASTQ worker threads")?;
+    // Vec's indexed parallel iterator collects results in manifest order.
+    let outcomes: Vec<_> = pool.install(|| entries.into_par_iter().map(analyse_entry).collect());
+
     tsv::write_analysis_header(output)?;
 
     let mut summary = AnalysisSummary::default();
-    for entry in entries {
-        let outcome = analyse_entry(entry);
+    for outcome in outcomes {
         summary.record(&outcome);
         tsv::write_analysis_row(
             output,
