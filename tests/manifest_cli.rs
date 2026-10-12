@@ -1,6 +1,7 @@
 use std::{
     fs::{self, File},
     io::Write,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicU64, Ordering},
@@ -8,6 +9,7 @@ use std::{
 };
 
 use flate2::{Compression, write::GzEncoder};
+use indicatif::ProgressBar;
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -195,6 +197,8 @@ fn manifest_preserves_order_and_reports_each_fastq_outcome() {
         "missing_file=1 empty_fastq=2 invalid_fastq=2 non_file_path=1 other_read_error=0"
     ));
     assert!(stderr.contains("Elapsed: "));
+    assert_eq!(stderr.lines().count(), 3);
+    assert!(!stderr.contains('\r'));
 
     for options in [&["-t", "1"][..], &["--threads", "4"][..]] {
         let threaded = run_manifest(&manifest, options);
@@ -205,7 +209,56 @@ fn manifest_preserves_order_and_reports_each_fastq_outcome() {
             threaded_stderr.lines().take(2).collect::<Vec<_>>(),
             stderr.lines().take(2).collect::<Vec<_>>()
         );
+        assert_eq!(threaded_stderr.lines().count(), 3);
+        assert!(!threaded_stderr.contains('\r'));
     }
+}
+
+#[test]
+fn progress_counts_every_checked_manifest_row() {
+    let directory = TempDir::new();
+    directory.file("known.fastq", b"@A00119:1\n");
+    directory.file("empty.fastq", b"");
+    let manifest = directory.manifest(
+        &["id", "fastq"],
+        &[
+            &["known", "known.fastq"],
+            &["missing", "missing.fastq"],
+            &["empty", "empty.fastq"],
+            &["known_again", "known.fastq"],
+        ],
+    );
+
+    let mut outputs = Vec::new();
+    for thread_count in [1, 4] {
+        let progress = ProgressBar::hidden();
+        let mut output = Vec::new();
+        let summary = seqsource::manifest::analyse_from_manifest_with_progress(
+            &manifest,
+            NonZeroUsize::new(thread_count).unwrap(),
+            &mut output,
+            &progress,
+        )
+        .unwrap();
+
+        assert_eq!(progress.length(), Some(4));
+        assert_eq!(progress.position(), 4);
+        assert_eq!(summary.total, 4);
+        assert_eq!(summary.successful, 2);
+        assert_eq!(summary.failed(), 2);
+        outputs.push(output);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+
+    let mut output_without_progress = Vec::new();
+    let summary = seqsource::manifest::analyse_from_manifest(
+        &manifest,
+        NonZeroUsize::new(1).unwrap(),
+        &mut output_without_progress,
+    )
+    .unwrap();
+    assert_eq!(summary.total, 4);
+    assert_eq!(output_without_progress, outputs[0]);
 }
 
 #[test]
@@ -336,19 +389,17 @@ fn header_only_manifest_has_zero_counts() {
     assert!(output.status.success());
     let (_, rows) = records(&output.stdout);
     assert!(rows.is_empty());
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("Samples: total=0 successful=0 failed=0")
-    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("Samples: total=0 successful=0 failed=0"));
+    assert_eq!(stderr.lines().count(), 3);
+    assert!(!stderr.contains('\r'));
     let threaded = run_manifest(&manifest, &["-t", "4"]);
     assert!(threaded.status.success());
     assert_eq!(threaded.stdout, output.stdout);
-    assert!(
-        String::from_utf8(threaded.stderr)
-            .unwrap()
-            .contains("Samples: total=0 successful=0 failed=0")
-    );
+    let threaded_stderr = String::from_utf8(threaded.stderr).unwrap();
+    assert!(threaded_stderr.contains("Samples: total=0 successful=0 failed=0"));
+    assert_eq!(threaded_stderr.lines().count(), 3);
+    assert!(!threaded_stderr.contains('\r'));
 }
 
 #[test]

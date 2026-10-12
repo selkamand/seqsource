@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
+use indicatif::ProgressBar;
 use rayon::{ThreadPoolBuilder, prelude::*};
 use serde::Deserialize;
 
@@ -146,13 +147,50 @@ pub fn analyse_from_manifest(
     threads: NonZeroUsize,
     output: &mut impl Write,
 ) -> Result<AnalysisSummary> {
+    analyse_from_manifest_inner(manifest, threads, output, None)
+}
+
+/// Analyse manifest rows while advancing `progress` after each FASTQ check.
+/// The total is set after the manifest has been validated.
+pub fn analyse_from_manifest_with_progress(
+    manifest: &Path,
+    threads: NonZeroUsize,
+    output: &mut impl Write,
+    progress: &ProgressBar,
+) -> Result<AnalysisSummary> {
+    analyse_from_manifest_inner(manifest, threads, output, Some(progress))
+}
+
+fn analyse_from_manifest_inner(
+    manifest: &Path,
+    threads: NonZeroUsize,
+    output: &mut impl Write,
+    progress: Option<&ProgressBar>,
+) -> Result<AnalysisSummary> {
     let entries = read_manifest(manifest)?;
     let pool = ThreadPoolBuilder::new()
         .num_threads(threads.get())
         .build()
         .context("could not start FASTQ worker threads")?;
+    if !entries.is_empty() {
+        if let Some(progress) = progress {
+            progress.set_length(entries.len() as u64);
+            progress.tick();
+        }
+    }
     // Vec's indexed parallel iterator collects results in manifest order.
-    let outcomes: Vec<_> = pool.install(|| entries.into_par_iter().map(analyse_entry).collect());
+    let outcomes: Vec<_> = pool.install(|| {
+        entries
+            .into_par_iter()
+            .map(|entry| {
+                let outcome = analyse_entry(entry);
+                if let Some(progress) = progress {
+                    progress.inc(1);
+                }
+                outcome
+            })
+            .collect()
+    });
 
     tsv::write_analysis_header(output)?;
 

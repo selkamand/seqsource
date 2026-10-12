@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use std::{
     io::{self, BufWriter, Write},
     num::NonZeroUsize,
@@ -74,8 +75,27 @@ fn main() -> Result<()> {
         Commands::Manifest { manifest, threads } => {
             let started = Instant::now();
             let mut output = BufWriter::new(io::stdout().lock());
-            let summary =
-                seqsource::manifest::analyse_from_manifest(&manifest, threads, &mut output)?;
+            let progress = ProgressBar::new(0);
+            progress.set_style(
+                ProgressStyle::with_template(
+                    "FASTQ files: {pos}/{len} checked, {remaining} left [{bar:20}]",
+                )?
+                .with_key(
+                    "remaining",
+                    |state: &ProgressState, writer: &mut dyn std::fmt::Write| {
+                        let remaining = state.len().unwrap_or(0).saturating_sub(state.pos());
+                        let _ = write!(writer, "{remaining}");
+                    },
+                ),
+            );
+            let result = seqsource::manifest::analyse_from_manifest_with_progress(
+                &manifest,
+                threads,
+                &mut output,
+                &progress,
+            );
+            progress.finish_and_clear();
+            let summary = result?;
             output.flush()?;
             eprintln!(
                 "Samples: total={} successful={} failed={}",
