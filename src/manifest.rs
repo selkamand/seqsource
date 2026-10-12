@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use rayon::{ThreadPoolBuilder, prelude::*};
 use serde::Deserialize;
 
@@ -12,6 +12,11 @@ use crate::{
     analysis::{self, FailureKind, FastqAnalysis, FastqCheckError},
     tsv,
 };
+
+#[cfg(windows)]
+const HOME_ENV: &str = "USERPROFILE";
+#[cfg(not(windows))]
+const HOME_ENV: &str = "HOME";
 
 #[derive(Debug, Deserialize)]
 struct ManifestRow {
@@ -98,12 +103,14 @@ fn read_manifest(manifest: &Path) -> Result<Vec<ManifestEntry>> {
                 manifest.display()
             );
         }
-        let path = Path::new(&row.fastq);
-        let resolved_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            directory.join(path)
-        };
+        let resolved_path = resolve_fastq_path(&row.fastq, directory).with_context(|| {
+            format!(
+                "cannot resolve FASTQ path {:?} in manifest record {} in {}",
+                row.fastq,
+                index + 2,
+                manifest.display()
+            )
+        })?;
         entries.push(ManifestEntry {
             id: row.id,
             fastq: row.fastq,
@@ -111,6 +118,22 @@ fn read_manifest(manifest: &Path) -> Result<Vec<ManifestEntry>> {
         });
     }
     Ok(entries)
+}
+
+fn resolve_fastq_path(raw_path: &str, directory: &Path) -> Result<PathBuf> {
+    let path = Path::new(raw_path);
+    if let Ok(suffix) = path.strip_prefix("~") {
+        let home = std::env::var_os(HOME_ENV)
+            .filter(|value| !value.is_empty())
+            .with_context(|| format!("{HOME_ENV} is unset or empty"))?;
+        let home = PathBuf::from(home);
+        ensure!(home.is_absolute(), "{HOME_ENV} must be an absolute path");
+        Ok(home.join(suffix))
+    } else if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(directory.join(path))
+    }
 }
 
 fn analyse_entry(entry: ManifestEntry) -> EntryOutcome {

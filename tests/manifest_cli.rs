@@ -11,6 +11,11 @@ use flate2::{Compression, write::GzEncoder};
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(windows)]
+const HOME_ENV: &str = "USERPROFILE";
+#[cfg(not(windows))]
+const HOME_ENV: &str = "HOME";
+
 struct TempDir {
     path: PathBuf,
 }
@@ -200,6 +205,83 @@ fn manifest_preserves_order_and_reports_each_fastq_outcome() {
             threaded_stderr.lines().take(2).collect::<Vec<_>>(),
             stderr.lines().take(2).collect::<Vec<_>>()
         );
+    }
+}
+
+#[test]
+fn manifest_expands_home_paths_and_preserves_input_paths() {
+    let directory = TempDir::new();
+    let home = TempDir::new();
+    let reads = home.path.join("reads");
+    fs::create_dir(&reads).unwrap();
+    fs::write(reads.join("home.fastq"), b"@A00119:1\n").unwrap();
+    directory.file("relative.fastq", b"@A00119:1\n");
+    let absolute = directory.file("absolute.fastq", b"@A00119:1\n");
+    directory.file("~otheruser.fastq", b"@A00119:1\n");
+
+    let absolute_text = absolute.to_str().unwrap();
+    let entries = vec![
+        vec!["home", "~/reads/home.fastq"],
+        vec!["relative", "relative.fastq"],
+        vec!["absolute", absolute_text],
+        vec!["other_user_literal", "~otheruser.fastq"],
+    ];
+    #[cfg(windows)]
+    let entries = {
+        let mut entries = entries;
+        entries.push(vec!["home_backslash", r"~\reads\home.fastq"]);
+        entries
+    };
+    let refs: Vec<&[&str]> = entries.iter().map(Vec::as_slice).collect();
+    let manifest = directory.manifest(&["id", "fastq"], &refs);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_seqsource"))
+        .arg("manifest")
+        .arg(&manifest)
+        .env(HOME_ENV, &home.path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let (_, rows) = records(&output.stdout);
+    assert_eq!(rows.len(), entries.len());
+    for (row, entry) in rows.iter().zip(&entries) {
+        assert_eq!(row.get(0), Some(entry[0]));
+        assert_eq!(row.get(1), Some(entry[1]));
+        assert_eq!(row.get(5), Some("true"));
+    }
+}
+
+#[test]
+fn manifest_reports_unavailable_or_invalid_home_before_output() {
+    let directory = TempDir::new();
+    let manifest = directory.manifest(&["id", "fastq"], &[&["sample", "~/reads.fastq"]]);
+
+    for (home_value, expected) in [
+        (None, "unset or empty"),
+        (Some("relative"), "absolute path"),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_seqsource"));
+        command.arg("manifest").arg(&manifest);
+        match home_value {
+            Some(value) => {
+                command.env(HOME_ENV, value);
+            }
+            None => {
+                command.env_remove(HOME_ENV);
+            }
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("manifest record 2"), "{stderr}");
+        assert!(stderr.contains("~/reads.fastq"), "{stderr}");
+        assert!(stderr.contains(HOME_ENV), "{stderr}");
+        assert!(stderr.contains(expected), "{stderr}");
     }
 }
 
